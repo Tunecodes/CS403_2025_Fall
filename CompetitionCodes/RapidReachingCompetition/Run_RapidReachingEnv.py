@@ -7,28 +7,56 @@ import queue
 import sys
 import threading
 import time
-from typing import Callable, Optional, Tuple, Union
 import weakref
-import PointManager
+from typing import Callable, Optional, Tuple, Union
 
 import glfw
 import mujoco
-from mujoco import _simulate
 import numpy as np
+from mujoco import _simulate
+
+import PointManager
 
 num_points = 8
 
 if not glfw._glfw:  # pylint: disable=protected-access
-    raise RuntimeError('GLFW dynamic library handle is not available')
+    raise RuntimeError("GLFW dynamic library handle is not available")
 else:
     _simulate.set_glfw_dlhandle(glfw._glfw._handle)  # pylint: disable=protected-access
 
 # Logarithmically spaced realtime slow-down coefficients (percent).
 PERCENT_REALTIME = (
-    100, 80, 66, 50, 40, 33, 25, 20, 16, 13,
-    10, 8, 6.6, 5, 4, 3.3, 2.5, 2, 1.6, 1.3,
-    1, 0.8, 0.66, 0.5, 0.4, 0.33, 0.25, 0.2, 0.16, 0.13,
-    0.1
+    100,
+    80,
+    66,
+    50,
+    40,
+    33,
+    25,
+    20,
+    16,
+    13,
+    10,
+    8,
+    6.6,
+    5,
+    4,
+    3.3,
+    2.5,
+    2,
+    1.6,
+    1.3,
+    1,
+    0.8,
+    0.66,
+    0.5,
+    0.4,
+    0.33,
+    0.25,
+    0.2,
+    0.16,
+    0.13,
+    0.1,
 )
 
 # Maximum time mis-alignment before re-sync.
@@ -52,12 +80,12 @@ class Handle:
     """A handle for interacting with a MuJoCo viewer."""
 
     def __init__(
-            self,
-            sim: _Simulate,
-            cam: mujoco.MjvCamera,
-            opt: mujoco.MjvOption,
-            pert: mujoco.MjvPerturb,
-            user_scn: Optional[mujoco.MjvScene],
+        self,
+        sim: _Simulate,
+        cam: mujoco.MjvCamera,
+        opt: mujoco.MjvOption,
+        pert: mujoco.MjvPerturb,
+        user_scn: Optional[mujoco.MjvScene],
     ):
         self._sim = weakref.ref(sim)
         self._cam = cam
@@ -153,11 +181,11 @@ class Handle:
 class _MjPythonBase(metaclass=abc.ABCMeta):
 
     def launch_on_ui_thread(
-            self,
-            model: mujoco.MjModel,
-            data: mujoco.MjData,
-            handle_return: Optional['queue.Queue[Handle]'],
-            key_callback: Optional[KeyCallbackType],
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        handle_return: Optional["queue.Queue[Handle]"],
+        key_callback: Optional[KeyCallbackType],
     ):
         pass
 
@@ -170,7 +198,7 @@ def _file_loader(path: str) -> _LoaderWithPathType:
     """Loads an MJCF model from file path."""
 
     def load(path=path) -> Tuple[mujoco.MjModel, mujoco.MjData, str]:
-        if len(path) >= 4 and path[-4:] == '.mjb':
+        if len(path) >= 4 and path[-4:] == ".mjb":
             m = mujoco.MjModel.from_binary_path(path)
         else:
             m = mujoco.MjModel.from_xml_path(path)
@@ -182,12 +210,13 @@ def _file_loader(path: str) -> _LoaderWithPathType:
 
 
 def _reload(
-        simulate: _Simulate, loader: _InternalLoaderType,
-        notify_loaded: Optional[Callable[[], None]] = None
+    simulate: _Simulate,
+    loader: _InternalLoaderType,
+    notify_loaded: Optional[Callable[[], None]] = None,
 ) -> Optional[Tuple[mujoco.MjModel, mujoco.MjData]]:
     """Internal function for reloading a model in the viewer."""
     try:
-        simulate.load_message('')  # path is unknown at this point
+        simulate.load_message("")  # path is unknown at this point
         load_tuple = loader()
     except Exception as e:  # pylint: disable=broad-except
         simulate.load_error = str(e)
@@ -201,11 +230,11 @@ def _reload(
         # possible segmentation faults.
         assert m is not None and d is not None
 
-        path = load_tuple[2] if len(load_tuple) == 3 else ''
+        path = load_tuple[2] if len(load_tuple) == 3 else ""
         simulate.load(m, d, path)
 
         # Make sure any load_error message is cleared
-        simulate.load_error = ''
+        simulate.load_error = ""
 
         if notify_loaded:
             notify_loaded()
@@ -241,7 +270,7 @@ def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
             if result is not None:
                 m, d = result
                 mujoco.mj_step(m, d)
-                ctrl = PointManager.PointHandle(m,d)
+                ctrl = PointManager.PointHandle(m, d)
                 ctrl.initialize_points(num_points)
                 ctrl_noise = np.zeros((m.nu,))
 
@@ -269,14 +298,17 @@ def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
                     # Inject noise.
                     if simulate.ctrl_noise_std != 0.0:
                         # Convert rate and scale to discrete time (Ornstein–Uhlenbeck).
-                        rate = math.exp(-m.opt.timestep /
-                                        max(simulate.ctrl_noise_rate, mujoco.mjMINVAL))
+                        rate = math.exp(
+                            -m.opt.timestep
+                            / max(simulate.ctrl_noise_rate, mujoco.mjMINVAL)
+                        )
                         scale = simulate.ctrl_noise_std * math.sqrt(1 - rate * rate)
 
                         for i in range(m.nu):
                             # Update noise.
-                            ctrl_noise[i] = (rate * ctrl_noise[i] +
-                                             scale * mujoco.mju_standardNormal(None))
+                            ctrl_noise[i] = rate * ctrl_noise[
+                                i
+                            ] + scale * mujoco.mju_standardNormal(None)
 
                             # Apply noise.
                             d.ctrl[i] = ctrl_noise[i]
@@ -286,12 +318,18 @@ def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
                     slowdown = 100 / PERCENT_REALTIME[simulate.real_time_index]
 
                     # Misalignment: distance from target sim time > MAX_SYNC_MISALIGN.
-                    misaligned = abs(elapsedcpu / slowdown -
-                                     elapsedsim) > MAX_SYNC_MISALIGN
+                    misaligned = (
+                        abs(elapsedcpu / slowdown - elapsedsim) > MAX_SYNC_MISALIGN
+                    )
 
                     # Out-of-sync (for any reason): reset sync times, step.
-                    if (elapsedsim < 0 or elapsedcpu < 0 or synccpu == 0 or misaligned or
-                            simulate.speed_changed):
+                    if (
+                        elapsedsim < 0
+                        or elapsedcpu < 0
+                        or synccpu == 0
+                        or misaligned
+                        or simulate.speed_changed
+                    ):
                         # Re-sync.
                         synccpu = startcpu
                         syncsim = d.time
@@ -306,9 +344,9 @@ def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
                         prevsim = d.time
                         refreshtime = SIM_REFRESH_FRACTION / simulate.refresh_rate
                         # Step while sim lags behind CPU and within refreshtime.
-                        while (((d.time - syncsim) * slowdown <
-                                (time.time() - synccpu)) and
-                               ((time.time() - startcpu) < refreshtime)):
+                        while (
+                            (d.time - syncsim) * slowdown < (time.time() - synccpu)
+                        ) and ((time.time() - startcpu) < refreshtime):
                             # Measure slowdown before first step.
                             if not measured and elapsedsim:
                                 simulate.measured_slowdown = elapsedcpu / elapsedsim
@@ -323,7 +361,7 @@ def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
                                 break
 
                     # save current state to history buffer
-                    if (stepped):
+                    if stepped:
                         simulate.add_to_history()
 
                 else:  # simulate.run is False: GUI is paused.
@@ -334,26 +372,27 @@ def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
 
 
 def _launch_internal(
-        model: Optional[mujoco.MjModel] = None,
-        data: Optional[mujoco.MjData] = None,
-        *,
-        run_physics_thread: bool,
-        loader: Optional[_InternalLoaderType] = None,
-        handle_return: Optional['queue.Queue[Handle]'] = None,
-        key_callback: Optional[KeyCallbackType] = None,
-        show_left_ui: bool = True,
-        show_right_ui: bool = True,
+    model: Optional[mujoco.MjModel] = None,
+    data: Optional[mujoco.MjData] = None,
+    *,
+    run_physics_thread: bool,
+    loader: Optional[_InternalLoaderType] = None,
+    handle_return: Optional["queue.Queue[Handle]"] = None,
+    key_callback: Optional[KeyCallbackType] = None,
+    show_left_ui: bool = True,
+    show_right_ui: bool = True,
 ) -> None:
     """Internal API, so that the public API has more readable type annotations."""
     if model is None and data is not None:
-        raise ValueError('mjData is specified but mjModel is not')
+        raise ValueError("mjData is specified but mjModel is not")
     elif callable(model) and data is not None:
         raise ValueError(
-            'mjData should not be specified when an mjModel loader is used')
+            "mjData should not be specified when an mjModel loader is used"
+        )
     elif loader is not None and model is not None:
-        raise ValueError('model and loader are both specified')
+        raise ValueError("model and loader are both specified")
     elif run_physics_thread and handle_return is not None:
-        raise ValueError('run_physics_thread and handle_return are both specified')
+        raise ValueError("run_physics_thread and handle_return are both specified")
 
     if loader is None and model is not None:
 
@@ -371,9 +410,7 @@ def _launch_internal(
         user_scn = mujoco.MjvScene(model, _Simulate.MAX_GEOM)
     else:
         user_scn = None
-    simulate = _Simulate(
-        cam, opt, pert, user_scn, run_physics_thread, key_callback
-    )
+    simulate = _Simulate(cam, opt, pert, user_scn, run_physics_thread, key_callback)
 
     simulate.ui0_enable = show_left_ui
     simulate.ui1_enable = show_right_ui
@@ -381,7 +418,7 @@ def _launch_internal(
     # Initialize GLFW if not using mjpython.
     if _MJPYTHON is None:
         if not glfw.init():
-            raise mujoco.FatalError('could not initialize GLFW')
+            raise mujoco.FatalError("could not initialize GLFW")
         atexit.register(glfw.terminate)
 
     notify_loaded = None
@@ -391,11 +428,11 @@ def _launch_internal(
         )
 
     if run_physics_thread:
-        side_thread = threading.Thread(
-            target=_physics_loop, args=(simulate, loader))
+        side_thread = threading.Thread(target=_physics_loop, args=(simulate, loader))
     else:
         side_thread = threading.Thread(
-            target=_reload, args=(simulate, loader, notify_loaded))
+            target=_reload, args=(simulate, loader, notify_loaded)
+        )
 
     def make_exit(simulate):
         def exit_simulate():
@@ -414,12 +451,12 @@ def _launch_internal(
 
 
 def launch(
-        model: Optional[mujoco.MjModel] = None,
-        data: Optional[mujoco.MjData] = None,
-        *,
-        loader: Optional[LoaderType] = None,
-        show_left_ui: bool = True,
-        show_right_ui: bool = True,
+    model: Optional[mujoco.MjModel] = None,
+    data: Optional[mujoco.MjData] = None,
+    *,
+    loader: Optional[LoaderType] = None,
+    show_left_ui: bool = True,
+    show_right_ui: bool = True,
 ) -> None:
     """Launches the Simulate GUI."""
     _launch_internal(
@@ -438,26 +475,25 @@ def launch_from_path(path: str) -> None:
 
 
 def launch_passive(
-        model: mujoco.MjModel,
-        data: mujoco.MjData,
-        *,
-        key_callback: Optional[KeyCallbackType] = None,
-        show_left_ui: bool = True,
-        show_right_ui: bool = True,
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    key_callback: Optional[KeyCallbackType] = None,
+    show_left_ui: bool = True,
+    show_right_ui: bool = True,
 ) -> Handle:
     """Launches a passive Simulate GUI without blocking the running thread."""
     if not isinstance(model, mujoco.MjModel):
-        raise ValueError(f'`model` is not a mujoco.MjModel: got {model!r}')
+        raise ValueError(f"`model` is not a mujoco.MjModel: got {model!r}")
     if not isinstance(data, mujoco.MjData):
-        raise ValueError(f'`data` is not a mujoco.MjData: got {data!r}')
+        raise ValueError(f"`data` is not a mujoco.MjData: got {data!r}")
     if key_callback is not None and not callable(key_callback):
-        raise ValueError(
-            f'`key_callback` is not callable: got {key_callback!r}')
+        raise ValueError(f"`key_callback` is not callable: got {key_callback!r}")
 
     mujoco.mj_forward(model, data)
     handle_return = queue.Queue(1)
 
-    if sys.platform != 'darwin':
+    if sys.platform != "darwin":
         thread = threading.Thread(
             target=_launch_internal,
             args=(model, data),
@@ -474,8 +510,9 @@ def launch_passive(
     else:
         if not isinstance(_MJPYTHON, _MjPythonBase):
             raise RuntimeError(
-                '`launch_passive` requires that the Python script be run under '
-                '`mjpython` on macOS')
+                "`launch_passive` requires that the Python script be run under "
+                "`mjpython` on macOS"
+            )
         _MJPYTHON.launch_on_ui_thread(
             model,
             data,
@@ -487,11 +524,14 @@ def launch_passive(
 
     return handle_return.get()
 
-def generate_random_points_3d(num_points: int,
-                              x_range: tuple = (0.1, 0.5),
-                              y_range: tuple = (0.1, 0.5),
-                              z_range: tuple = (0.1, 0.5),
-                              seed: int = 123) -> np.ndarray:
+
+def generate_random_points_3d(
+    num_points: int,
+    x_range: tuple = (0.1, 0.5),
+    y_range: tuple = (0.1, 0.5),
+    z_range: tuple = (0.1, 0.5),
+    seed: int = 123,
+) -> np.ndarray:
     """Generate random 3D points."""
     np.random.seed(seed)
     x_points = np.random.uniform(x_range[0], x_range[1], num_points)
@@ -502,37 +542,37 @@ def generate_random_points_3d(num_points: int,
 
 def add_points_to_xml(original_xml_path: str, points: np.ndarray, output_xml_path: str):
     """Add point sites to the XML model."""
-    with open(original_xml_path, 'r') as f:
+    with open(original_xml_path, "r") as f:
         xml_content = f.read()
 
     # Generate site elements for points
     site_elements = []
     for i, point in enumerate(points):
         x, y, z = point
-        site_element = f'''
+        site_element = f"""
         <site name="point{i}" 
               pos="{x:.3f} {y:.3f} {z:.3f}" 
               size="0.05" 
               type="sphere" 
-              rgba="1 0 0 1"/>'''
+              rgba="1 0 0 1"/>"""
         site_elements.append(site_element)
 
     # Add sites before </worldbody>
-    sites_str = '\n'.join(site_elements)
-    modified_xml = xml_content.replace('</worldbody>', f'{sites_str}\n    </worldbody>')
+    sites_str = "\n".join(site_elements)
+    modified_xml = xml_content.replace("</worldbody>", f"{sites_str}\n    </worldbody>")
 
-    with open(output_xml_path, 'w') as f:
+    with open(output_xml_path, "w") as f:
         f.write(modified_xml)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # pylint: disable=g-bad-import-order
     # from absl import app  # pylint: disable=g-import-not-at-top
     # dir_path = os.path.dirname(os.path.realpath(__file__))
     # def main(argv) -> None:
     #     launch_from_path(dir_path + "/Robot/miniArm.xml")
     # app.run(main)
-    
+
     NUM_POINTS = num_points
     THRESHOLD = 0.001  # Distance threshold for reaching points
 
@@ -540,11 +580,13 @@ if __name__ == '__main__':
     dir_path = os.path.dirname(os.path.realpath(__file__))
 
     # Generate random points
-    points = generate_random_points_3d(num_points=NUM_POINTS,
-                                       x_range=(-0.8, 0.8),
-                                       y_range=(-0.8, 0.8),
-                                       z_range=(0.5, 1),
-                                       seed=123)
+    points = generate_random_points_3d(
+        num_points=NUM_POINTS,
+        x_range=(-0.8, 0.8),
+        y_range=(-0.8, 0.8),
+        z_range=(0.5, 1),
+        seed=123,
+    )
     # print(points)
 
     # Original and modified model paths
