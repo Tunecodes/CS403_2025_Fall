@@ -78,13 +78,14 @@
   </worldbody>
 <!-- Add actuators for the joints -->
   <actuator>
-    <motor joint="base_yaw" ctrllimited="true" ctrlrange="-10 10" gear="1" forcerange="-3 3"/>
-    <motor joint="shoulder_pitch" ctrllimited="true" ctrlrange="-25 25" gear="1" forcerange="-15 15"/>
-    <motor joint="shoulder_roll" ctrllimited="true" ctrlrange="-15 15" gear="1" forcerange="-5 5"/>
-    <motor joint="elbow" ctrllimited="true" ctrlrange="-20 20" gear="1" forcerange="-10 10"/>
-    <motor joint="wrist_pitch" ctrllimited="true" ctrlrange="-10 10" gear="1" forcerange="-3 3"/>
-    <motor joint="wrist_roll" ctrllimited="true" ctrlrange="-5 5" gear="1" forcerange="-1 1"/>
+    <motor joint="base_yaw" ctrllimited="true" ctrlrange="-10 10" gear="1" forcerange="-20 20"/>
+    <motor joint="shoulder_pitch" ctrllimited="true" ctrlrange="-25 25" gear="1" forcerange="-80 80"/>
+    <motor joint="shoulder_roll" ctrllimited="true" ctrlrange="-15 15" gear="1" forcerange="-30 30"/>
+    <motor joint="elbow" ctrllimited="true" ctrlrange="-20 20" gear="1" forcerange="-40 40"/>
+    <motor joint="wrist_pitch" ctrllimited="true" ctrlrange="-10 10" gear="1" forcerange="-20 20"/>
+    <motor joint="wrist_roll" ctrllimited="true" ctrlrange="-5 5" gear="1" forcerange="-10 10"/>
   </actuator>
+
   <keyframe>
     <!-- <key name="init_pose" qpos="1.125 0 0.92 
                                 0.987 0 0.16"

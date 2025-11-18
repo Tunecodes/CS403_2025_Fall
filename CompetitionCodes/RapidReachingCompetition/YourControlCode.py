@@ -22,13 +22,13 @@ class YourCtrl:
         )
 
         # Task-space control gains (from Lecture 10-11 slide pattern)
-        self.kp_task = 600.0  # Proportional gain for position error
-        self.kd_task = 50.0  # Derivative gain for velocity damping
+        self.kp_task = 1200.0  # Proportional gain for position error
+        self.kd_task = 80.0  # Derivative gain for velocity damping
 
         # Null-space control gains (from lecture: for redundancy resolution)
         # Keep these small so they don't interfere with task
-        self.kp_null = 5.0
-        self.kd_null = 2.0
+        self.kp_null = 10.0
+        self.kd_null = 3.0
 
         # Desired null-space configuration (comfortable middle position)
         self.q_null = np.array([0.0, -0.5, 0.0, -1.2, 0.0, 0.0])
@@ -36,6 +36,11 @@ class YourCtrl:
         # Timing
         self.start_time = None  # Will be set when first point is being pursued
         self.completion_time = None
+
+        # Initialize robot to comfortable starting pose
+        self.d.qpos[:6] = np.array([0.0, -0.5, 0.0, -1.2, 0.0, 0.0])
+        self.d.qvel[:6] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        mujoco.mj_forward(self.m, self.d)  # Update kinematics
 
     def _get_ee_position(self):
         """
@@ -184,7 +189,7 @@ class YourCtrl:
 
         # Convert to torques using joint-space PD control (from Lecture 10-11)
         kp_joint = 50.0
-        kd_joint = 15.0
+        kd_joint = 30.0
 
         # Velocity tracking: τ = Kd * (q̇_desired - q̇_current)
         torque = kd_joint * (q_dot_cmd - self.d.qvel[:6])
@@ -196,6 +201,8 @@ class YourCtrl:
         torque += qfrc_bias[:6]
 
         # Torque limits for safety
+        torque_limits_lower = np.array([-20, -80, -30, -40, -20, -10])  # Note the -80
+        torque_limits_upper = np.array([20, 80, 30, 40, 20, 10])
         torque = np.clip(torque, -50, 50)
 
         return torque
