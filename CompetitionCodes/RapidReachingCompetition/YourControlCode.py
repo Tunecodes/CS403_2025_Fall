@@ -8,65 +8,65 @@ class YourCtrl:
     def __init__(self, m: mujoco.MjModel, d: mujoco.MjData, target_points):
         self.m = m
         self.d = d
-        self.target_points = target_points  # Shape: (3, num_points)
+        self.target_points = target_points
         self.num_points = target_points.shape[1]
 
-        # Track which points we've visited
+        # Tracking  which points we've visited (start all as  False)
         self.visited = [False] * self.num_points
-        self.visit_threshold = 0.035  # 35mm threshold for considering point "reached"
-        self.completed = False  # Flag to track if all points are done
+        self.visit_threshold = 0.01
+        self.stuck_timeout = 20000  # 20 seconds - very patient
 
-        # Get end effector body ID (from lecture examples)
+        # Getting end effector body ID
         self.ee_body_id = mujoco.mj_name2id(
             self.m, mujoco.mjtObj.mjOBJ_BODY, "EE_Frame"
         )
 
-        # Task-space control gains (from Lecture 10-11 slide pattern)
-        self.kp_task = 1200.0  # Proportional gain for position error
-        self.kd_task = 80.0  # Derivative gain for velocity damping
+        # Control gains
+        self.kp_task = 800.0  # Moderate gain
+        self.kd_task = 60.0  # Moderate damping
 
-        # Null-space control gains (from lecture: for redundancy resolution)
-        # Keep these small so they don't interfere with task
-        self.kp_null = 10.0
-        self.kd_null = 3.0
+        # Control gains for null-space (DISABLED)
+        self.kp_null = 0.0
+        self.kd_null = 0.0
 
-        # Desired null-space configuration (comfortable middle position)
+        # Desired null-space configuration
         self.q_null = np.array([0.0, -0.5, 0.0, -1.2, 0.0, 0.0])
 
+        # Per-joint torque limits matching XML forcerange
+        # [base_yaw, shoulder_pitch, shoulder_roll, elbow, wrist_pitch, wrist_roll]
+        self.torque_limits = np.array([3.0, 15.0, 5.0, 10.0, 3.0, 0.1])
+
+        # Track current target for debugging
+        self.current_target = None
+        self.stuck_counter = 0
+
         # Timing
-        self.start_time = None  # Will be set when first point is being pursued
+        self.start_time = time.time()
         self.completion_time = None
 
-        # Initialize robot to comfortable starting pose
-        self.d.qpos[:6] = np.array([0.0, -0.5, 0.0, -1.2, 0.0, 0.0])
-        self.d.qvel[:6] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        mujoco.mj_forward(self.m, self.d)  # Update kinematics
+    def reset(self):
+        """Resets controller state for a new run"""
+        self.visited = [False] * self.num_points
+        self.current_target = None
+        self.stuck_counter = 0
+        self.start_time = time.time()
+        self.completion_time = None
+        print("[Controller] Reset - ready for new run!")
 
     def _get_ee_position(self):
-        """
-        Get end effector position in world frame
-        From lectures: self.d.xpos[body_id] gives body position
-        """
+        """Getting current end effector position in world frame"""
         return self.d.xpos[self.ee_body_id].copy()
 
     def _get_ee_velocity(self):
-        """
-        Get end effector velocity using Jacobian
-        From Lecture 9-11: Linear velocity = Jacobian × joint velocities
-        Formula: ẋ = J·q̇
-        """
+        """Getting current end effector velocity in world frame"""
         jacp = np.zeros((3, self.m.nv))
         jacr = np.zeros((3, self.m.nv))
-        # From lecture: mj_jacBody computes world frame Jacobian
         mujoco.mj_jacBody(self.m, self.d, jacp, jacr, self.ee_body_id)
-        # Velocity = Jacobian @ joint_velocities (from lecture formula)
+        # Linear velocity = Jacobian * joint velocities
         return jacp @ self.d.qvel[:6]
 
     def _get_jacobian(self):
-        """
-        Get position Jacobian for end effector
-        From Lecture 10-11: "mujoco.mj_jacBody" returns world frame Jacobian
-        """
+        """Getting the 3D position Jacobian for the end effector"""
         jacp = np.zeros((3, self.m.nv))
         jacr = np.zeros((3, self.m.nv))
         mujoco.mj_jacBody(self.m, self.d, jacp, jacr, self.ee_body_id)
@@ -74,46 +74,40 @@ class YourCtrl:
 
     def _select_nearest_target(self):
         """
-        Select nearest unvisited target point
-        Marks points as visited when within threshold distance
-        Returns: (target_idx, distance) tuple
+        Select the nearest unvisited target point.
+        Marks points as visited when we get within 35mm.
+        Auto-skips points if stuck for too long.
         """
         ee_pos = self._get_ee_position()
 
-        # Start timer on first call
-        if self.start_time is None:
-            self.start_time = time.time()
-
-        # First pass: Mark any unvisited points we're close to as visited
+        # First pass: Marking any unvisited points we're close enough to as visited
         for i in range(self.num_points):
             if not self.visited[i]:
                 dist = np.linalg.norm(ee_pos - self.target_points[:, i])
                 if dist < self.visit_threshold:
                     self.visited[i] = True
+                    self.stuck_counter = 0  # Reset stuck counter
 
-                    # Change color to green to show it's reached
+                    # Changing color to green
                     site_id = self.m.site(f"point{i}").id
                     self.m.site_rgba[site_id] = np.array([0.0, 1.0, 0.0, 1.0])  # Green
 
-                    elapsed = time.time() - self.start_time
                     print(
-                        f"Point {i} reached! Distance: {dist*1000:.1f}mm | Elapsed: {elapsed:.2f}s"
+                        f"[Controller] ✓ Visited Point {i}! (distance: {dist*1000:.1f}mm)"
                     )
-                    print(f"Points remaining: {self.num_points - sum(self.visited)}")
+                    print(
+                        f"[Controller] Progress: {sum(self.visited)}/{self.num_points} points visited"
+                    )
 
-        # Check if all points visited
+        # Check if all visited
         if all(self.visited):
-            if not self.completed:
+            if self.completion_time is None:
                 self.completion_time = time.time() - self.start_time
-                print("\n" + "=" * 50)
-                print("All points reached!")
-                print(f"Total points visited: {sum(self.visited)}/{self.num_points}")
-                print(f"⏱️  Total completion time: {self.completion_time:.2f} seconds")
-                print("=" * 50 + "\n")
-                self.completed = True
-            return 0, 0.0  # Special return value indicating completion
+                print("[Controller] 🎉 All points visited!")
+                print(f"[Controller] ⏱️  Total time: {self.completion_time:.2f} seconds")
+            return 0, 0.0
 
-        # Second pass: Find nearest unvisited point
+        # Second pass: Finding nearest unvisited point
         min_dist = float("inf")
         nearest_idx = 0
 
@@ -124,20 +118,58 @@ class YourCtrl:
                     min_dist = dist
                     nearest_idx = i
 
+        # Checking if we're stuck on the same target
+        if self.current_target == nearest_idx:
+            self.stuck_counter += 1
+
+            if self.stuck_counter % 2000 == 0:
+                print(
+                    f"[Controller] ... working on Point {nearest_idx} (dist: {min_dist*1000:.1f}mm, time: {self.stuck_counter/1000:.0f}s)"
+                )
+
+            # If stuck for too long, skip this point
+            if self.stuck_counter > self.stuck_timeout:
+                print(
+                    f"[Controller] ⚠️ Stuck on Point {nearest_idx} for {self.stuck_timeout/1000:.0f}s (dist: {min_dist*1000:.1f}mm) - marking as skipped"
+                )
+                self.visited[nearest_idx] = True
+
+                # Changing color to yellow to show it was skipped
+                site_id = self.m.site(f"point{nearest_idx}").id
+                self.m.site_rgba[site_id] = np.array(
+                    [1.0, 1.0, 0.0, 1.0]
+                )  # Yellow (skipped)
+
+                self.stuck_counter = 0
+                # Recursively finding next target
+                return self._select_nearest_target()
+        else:
+            # New target - resetting counter and print
+            if self.current_target != nearest_idx:
+                print(
+                    f"[Controller] → Targeting Point {nearest_idx} (distance: {min_dist*1000:.1f}mm)"
+                )
+            self.current_target = nearest_idx
+            self.stuck_counter = 0
+
         return nearest_idx, min_dist
 
     def CtrlUpdate(self):
-        """
-        Main control loop
-        Based on lecture patterns for end-effector control
-        """
-        # Select target (returns index and distance)
+        """Control update - it computes joint torques to reach targets"""
+
+        # Selecting nearest unvisited target
         target_idx, dist_to_target = self._select_nearest_target()
 
-        # If all points visited, stop at the last point
+        # If all points visited, just hold position with gravity compensation
         if dist_to_target == 0.0:
-            # Return zero torques to stop all motion
-            return np.zeros(6)
+            # Compute gravity compensation to prevent falling
+            qfrc_bias = np.zeros(self.m.nv)
+            mujoco.mj_rne(self.m, self.d, 0, qfrc_bias)
+
+            # Add damping to stop motion
+            damping_torque = -20.0 * self.d.qvel[:6]
+
+            return qfrc_bias[:6] + damping_torque
 
         target_pos = self.target_points[:, target_idx]
 
@@ -145,64 +177,59 @@ class YourCtrl:
         ee_pos = self._get_ee_position()
         ee_vel = self._get_ee_velocity()
 
-        # (from Lecture 10-11)
-        # Position error in Cartesian space
+        # Task-space control: PD control in Cartesian space
         pos_error = target_pos - ee_pos
 
-        # Desired task-space velocity using PD law
-        # Formula: ẋ_desired = Kp * error - Kd * velocity
+        # Desired task-space velocity (PD control)
         desired_task_vel = self.kp_task * pos_error - self.kd_task * ee_vel
 
-        # Limiting  maximum velocity for stability
-        max_task_vel = 1.5  # m/s
+        # Limit maximum task velocity
+        max_task_vel = 1.5  # In  m/s - moderate speed
         task_vel_norm = np.linalg.norm(desired_task_vel)
         if task_vel_norm > max_task_vel:
             desired_task_vel = desired_task_vel * (max_task_vel / task_vel_norm)
 
-        # Jacobian (from Lecture 9-11)
+        # Getting the  Jacobian
         J = self._get_jacobian()
 
-        # Compute damped pseudo-inverse for inverse kinematics (from Lecture 2)
-        # For non-square matrix: J^+ = J^T (J J^T + λI)^{-1}
-        # Damping prevents singularity issues
-        damping = 0.01
+        # Computing pseudo-inverse with damping
+        damping = 0.02  # Moderate damping
         J_damped = J.T @ np.linalg.inv(J @ J.T + damping * np.eye(3))
 
-        # Compute desired joint velocities (from lecture: inverse kinematics)
-        # q̇_task = J^+ × ẋ_desired (primary task)
-        q_dot_task = J_damped @ desired_task_vel
+        # Desired joint velocities to achieve task velocity
+        q_dot_desired = J_damped @ desired_task_vel
 
-        # Null-space control (from Lecture 9-11: redundancy resolution)
-        # For 6-DOF arm controlling 3-DOF position, we have 3 extra DOF
-        # Use these for secondary objectives without affecting primary task
-
-        # Null-space projector: N = I - J^+ J
+        # Null-space control: drive joints toward comfortable configuration
+        # Note: This doesn't affect end effector motion but improves arm posture
         null_space_proj = np.eye(6) - J_damped @ J
-
-        # Secondary objective: move joints toward comfortable configuration
         q_error_null = self.q_null - self.d.qpos[:6]
         q_dot_null = self.kp_null * q_error_null - self.kd_null * self.d.qvel[:6]
 
-        # Combined desired joint velocity (primary + secondary in null-space)
-        # q̇_cmd = q̇_task + N q̇_null
-        q_dot_cmd = q_dot_task + null_space_proj @ q_dot_null
+        # Combined desired joint velocity
+        q_dot_cmd = q_dot_desired + null_space_proj @ q_dot_null
 
-        # Convert to torques using joint-space PD control (from Lecture 10-11)
-        kp_joint = 50.0
-        kd_joint = 30.0
+        kp_joint = 30.0  # Position gain at joint level
+        kd_joint = 25.0  # Velocity damping at joint level
 
-        # Velocity tracking: τ = Kd * (q̇_desired - q̇_current)
-        torque = kd_joint * (q_dot_cmd - self.d.qvel[:6])
+        # Computing desired joint positions using simple integration
 
-        # Add gravity compensation (from Lecture 15: Newton-Euler dynamics)
-        # mj_rne computes inverse dynamics: gravity + Coriolis forces
+        dt = 0.001  # MuJoCo timestep
+        q_desired_integrated = self.d.qpos[:6] + q_dot_cmd * dt
+
+        # PD control: position error + velocity error
+        torque = kp_joint * (q_desired_integrated - self.d.qpos[:6]) + kd_joint * (
+            q_dot_cmd - self.d.qvel[:6]
+        )
+
+        # Adding  gravity compensation
         qfrc_bias = np.zeros(self.m.nv)
-        mujoco.mj_rne(self.m, self.d, 0, qfrc_bias)
+        mujoco.mj_rne(self.m, self.d, 0, qfrc_bias)  # Computes gravity and Coriolis
         torque += qfrc_bias[:6]
 
-        # Torque limits for safety
-        torque_limits_lower = np.array([-20, -80, -30, -40, -20, -10])  # Note the -80
-        torque_limits_upper = np.array([20, 80, 30, 40, 20, 10])
-        torque = np.clip(torque, -50, 50)
+        # Per-joint torque the limits matching XML forcerange
+        for i in range(6):
+            torque[i] = np.clip(
+                torque[i], -self.torque_limits[i], self.torque_limits[i]
+            )
 
         return torque
